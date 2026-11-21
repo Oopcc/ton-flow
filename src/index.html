@@ -1,0 +1,110 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>TON Flow</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#0f1318;--p:#1a2028;--p2:#222b35;--t:#e8edf2;--m:#8794a3;--in:#3b8ad9;--out:#d9832b;--ac:#3aa0ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--t);font:14px/1.4 system-ui,-apple-system,Segoe UI,sans-serif}
+header{display:flex;gap:8px;padding:12px 16px;background:var(--p);flex-wrap:wrap;align-items:center;position:sticky;top:0;z-index:5}
+header b{font-size:16px;margin-right:6px}
+input,select,button{background:var(--p2);color:var(--t);border:1px solid #2e3a47;border-radius:8px;padding:8px 10px;font:inherit}
+#addr{flex:1;min-width:260px}button{cursor:pointer;background:var(--ac);border:0;color:#fff;font-weight:600}
+nav{display:flex;gap:4px;padding:8px 16px;overflow:auto;border-bottom:1px solid #222b35}
+nav a{padding:6px 12px;border-radius:16px;color:var(--m);cursor:pointer;white-space:nowrap}nav a.on{background:var(--p2);color:var(--t)}
+main{padding:16px}#sum{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.card{background:var(--p);border-radius:12px;padding:10px 14px}.card small{display:block;color:var(--m)}.card b{font-size:18px}
+table{width:100%;border-collapse:collapse}td,th{padding:8px;text-align:left;border-bottom:1px solid #222b35}th{color:var(--m);font-weight:500}
+.in{color:var(--in)}.out{color:var(--out)}.m{color:var(--m)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.nft{background:var(--p);border-radius:12px;overflow:hidden}.nft img{width:100%;aspect-ratio:1;object-fit:cover;display:block;background:var(--p2)}
+.nft div{padding:8px;font-size:12px;word-break:break-word}
+svg text{fill:var(--t);font-size:12px}svg .g{cursor:pointer}svg .g:hover text{fill:var(--ac)}
+#st{color:var(--m);padding:4px 16px}
+</style></head><body>
+<header><b>◈ TON Flow</b>
+<input id="addr" placeholder="Адрес кошелька или name.ton" autofocus>
+<select id="depth"><option value="100">100 событий</option><option value="300" selected>300</option><option value="1000">1000</option><option value="3000">3000</option></select>
+<input id="key" placeholder="API key (необяз.)" style="width:150px" type="password">
+<button id="go">Показать</button></header>
+<div id="st"></div><nav id="tabs"></nav><main id="view"></main>
+<script>
+const $=s=>document.querySelector(s),API='https://tonapi.io/v2',sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const short=a=>a.length>14?a.slice(0,5)+'…'+a.slice(-4):a, nm=p=>p.name||short(p.address);
+const fmt=(n,d=2)=>Number(n).toLocaleString('ru',{maximumFractionDigits:d});
+const col=s=>{let h=0;for(const c of s)h=(h*31+c.charCodeAt(0))%360;return`hsl(${h} 55% 45%)`};
+let S=null,TAB='flow';$('#key').value=localStorage.getItem('tfkey')||'';
+async function api(p){const k=$('#key').value.trim();localStorage.setItem('tfkey',k);
+ for(let i=0;i<5;i++){const r=await fetch(API+p,{headers:k?{Authorization:'Bearer '+k}:{}});
+  if(r.status==429){await sleep(1300*(i+1));continue}
+  if(!r.ok)throw new Error(r.status+' '+(await r.text().catch(()=>'')).slice(0,120));return r.json()}
+ throw new Error('Лимит запросов — добавьте API key')}
+const st=t=>$('#st').textContent=t;
+async function load(addr){
+ addr=addr.trim();if(!addr)return;$('#addr').value=addr;location.hash=addr;
+ try{st('Загрузка аккаунта…');const acc=await api('/accounts/'+encodeURIComponent(addr));const me=acc.address;
+  const lim=+$('#depth').value;let evs=[],bl='';
+  while(evs.length<lim){st(`События: ${evs.length}…`);
+   const r=await api(`/accounts/${me}/events?limit=100&subject_only=true`+(bl?`&before_lt=${bl}`:''));
+   evs=evs.concat(r.events||[]);if(!r.next_from||!r.events?.length)break;bl=r.next_from}
+  st('NFT и токены…');
+  const nfts=await api(`/accounts/${me}/nfts?limit=1000&indirect_ownership=false`).then(r=>r.nft_items||[]).catch(()=>[]);
+  const jets=await api(`/accounts/${me}/jettons`).then(r=>r.balances||[]).catch(()=>[]);
+  S={me,acc,nfts,jets,...agg(evs,me),evN:evs.length};st('');draw()
+ }catch(e){st('Ошибка: '+e.message)}}
+function agg(evs,me){const inn={},out={},tx=[];
+ for(const e of evs)for(const a of e.actions||[]){
+  const j=a.JettonTransfer,t=a.TonTransfer,n=a.NftItemTransfer,x=t||j||n;if(!x||a.status!=='ok')continue;
+  const s=x.sender,r=x.recipient;if(!s||!r)continue;
+  const dir=s.address===me?'out':r.address===me?'in':null;if(!dir)continue;
+  const peer=dir==='out'?r:s,M=dir==='out'?out:inn,row=M[peer.address]??={a:peer,n:0,ton:0,c:0,nft:0,jet:0};
+  let amt='',kind='ton';row.n++;
+  if(t){row.ton+=t.amount/1e9;amt=fmt(t.amount/1e9,4)+' TON'}
+  else if(j){kind='jetton';row.jet++;amt=fmt(j.amount/10**(j.jetton.decimals||9),4)+' '+(j.jetton.symbol||'')}
+  else{kind='nft';row.nft++;amt='NFT'}
+  if(x.comment)row.c++;
+  tx.push({ts:e.timestamp,dir,peer,kind,amt,cm:x.comment||''})}
+ return{inn,out,tx}}
+const TABS=[['flow','Потоки'],['tx','Транзакции'],['gifts','Подарки TG'],['users','Юзернеймы'],['nums','Номера'],['dns','.ton домены'],['jet','Jettons']];
+function cat(n){const c=(n.collection?.name||'').toLowerCase(),at=(n.metadata?.attributes||[]).map(a=>(a.trait_type||'').toLowerCase());
+ if(c.includes('telegram usernames'))return'users';if(c.includes('telegram numbers'))return'nums';
+ if(n.dns&&n.dns.endsWith('.ton'))return'dns';if(at.includes('model')&&at.includes('backdrop'))return'gifts';return'other'}
+function draw(){if(!S)return;const g=S.nfts.reduce((m,n)=>(m[cat(n)]=(m[cat(n)]||0)+1,m),{});
+ const sum=(o,k)=>Object.values(o).reduce((s,r)=>s+r[k],0);
+ $('#tabs').innerHTML=TABS.map(([k,l])=>`<a class="${k==TAB?'on':''}" onclick="TAB='${k}';draw()">${l}${g[k]?` · ${g[k]}`:''}${k=='jet'&&S.jets.length?` · ${S.jets.length}`:''}</a>`).join('');
+ const bal=S.acc.balance/1e9;
+ const head=`<div id="sum"><div class="card"><small>${esc(S.acc.name||'Кошелёк')}</small><b>${fmt(bal,4)} TON</b></div>
+ <div class="card in"><small>Получено TON</small><b>${fmt(sum(S.inn,'ton'))}</b></div>
+ <div class="card out"><small>Отправлено TON</small><b>${fmt(sum(S.out,'ton'))}</b></div>
+ <div class="card"><small>Событий загружено</small><b>${S.evN}</b></div>
+ <div class="card"><small>NFT / Jettons</small><b>${S.nfts.length} / ${S.jets.length}</b></div></div>`;
+ let v='';if(TAB=='flow')v=flow();else if(TAB=='tx')v=txs();else if(TAB=='jet')v=jet();else v=nftGrid(TAB);
+ $('#view').innerHTML=head+v}
+function topN(M){const a=Object.values(M).sort((x,y)=>y.n-x.n);return{rows:a.slice(0,10),more:a.length-10}}
+function flow(){const L=topN(S.inn),R=topN(S.out),W=1100,rh=48,N=Math.max(L.rows.length,R.rows.length,3),H=N*rh+110,cy=H/2+10;
+ const mx=Math.max(1,...L.rows.concat(R.rows).map(r=>r.n));
+ const stat=r=>`⇄${r.n}${r.ton?`  💎${fmt(r.ton)}`:''}${r.c?`  💬${r.c}`:''}${r.nft?`  🎁${r.nft}`:''}${r.jet?`  🪙${r.jet}`:''}`;
+ const y0=(k,len)=>cy-(len-1)*rh/2+k*rh;let s=`<svg viewBox="0 0 ${W} ${H}" width="100%">`;
+ s+=`<text x="340" y="22" text-anchor="end" class="m" style="fill:#8794a3">Получил</text><text x="340" y="42" text-anchor="end" style="font-size:16px;font-weight:700">${L.rows.reduce((q,r)=>q+r.n,0)+(L.more>0?'+':'')} переводов</text>`;
+ s+=`<text x="760" y="22" style="fill:#8794a3">Отправил</text><text x="760" y="42" style="font-size:16px;font-weight:700">${R.rows.reduce((q,r)=>q+r.n,0)+(R.more>0?'+':'')} переводов</text>`;
+ L.rows.forEach((r,k)=>{const y=y0(k,L.rows.length),w=2+14*r.n/mx;
+  s+=`<path d="M350 ${y}C430 ${y} 420 ${cy} 480 ${cy}" fill="none" stroke="#3b8ad9" stroke-width="${w}" opacity=".8"/>
+  <g class="g" onclick="load('${r.a.address}')"><text x="316" y="${y-4}" text-anchor="end" style="font-weight:600">${esc(nm(r.a))}</text><text x="316" y="${y+12}" text-anchor="end" style="fill:#8794a3;font-size:11px">${stat(r)}</text>
+  <circle cx="333" cy="${y}" r="13" fill="${col(r.a.address)}"/></g>`});
+ R.rows.forEach((r,k)=>{const y=y0(k,R.rows.length),w=2+14*r.n/mx;
+  s+=`<path d="M620 ${cy}C680 ${cy} 670 ${y} 750 ${y}" fill="none" stroke="#d9832b" stroke-width="${w}" opacity=".8"/>
+  <g class="g" onclick="load('${r.a.address}')"><circle cx="767" cy="${y}" r="13" fill="${col(r.a.address)}"/>
+  <text x="788" y="${y-4}" style="font-weight:600">${esc(nm(r.a))}</text><text x="788" y="${y+12}" style="fill:#8794a3;font-size:11px">${stat(r)}</text></g>`});
+ if(L.more>0)s+=`<text x="316" y="${H-8}" text-anchor="end" style="fill:#8794a3">ещё ${L.more}</text>`;
+ if(R.more>0)s+=`<text x="788" y="${H-8}" style="fill:#8794a3">ещё ${R.more}</text>`;
+ s+=`<rect x="480" y="${cy-32}" width="140" height="64" rx="14" fill="#222b35"/><circle cx="505" cy="${cy}" r="13" fill="${col(S.me)}"/>
+ <text x="526" y="${cy+4}" style="font-weight:700">${esc(short(S.acc.name||S.me))}</text></svg>`;
+ return`<div style="overflow-x:auto;min-width:700px">${s}</div><p class="m">Клик по адресу — открыть его кошелёк. Толщина линии = число переводов.</p>`}
+function txs(){return`<table><tr><th>Время</th><th></th><th>Адрес</th><th>Сумма</th><th>Комментарий</th></tr>`+S.tx.slice(0,500).map(t=>
+ `<tr><td class="m">${new Date(t.ts*1000).toLocaleString('ru')}</td><td class="${t.dir}">${t.dir=='in'?'↓ получено':'↑ отправлено'}</td>
+ <td><a class="g" style="cursor:pointer;color:var(--ac)" onclick="load('${t.peer.address}')">${esc(nm(t.peer))}</a></td><td>${esc(t.amt)}</td><td class="m">${esc(t.cm)}</td></tr>`).join('')+`</table>`}
+function jet(){return S.jets.length?`<table><tr><th>Токен</th><th>Баланс</th></tr>`+S.jets.map(b=>`<tr><td>${esc(b.jetton.name||b.jetton.symbol)}</td><td>${fmt(b.balance/10**(b.jetton.decimals||9),4)} ${esc(b.jetton.symbol)}</td></tr>`).join('')+`</table>`:'<p class="m">Пусто</p>'}
+function nftGrid(k){const l=S.nfts.filter(n=>cat(n)==k);if(!l.length)return'<p class="m">Пусто</p>';
+ return`<div class="grid">`+l.map(n=>{const im=(n.previews||[]).find(p=>p.resolution=='500x500')?.url||n.metadata?.image||'';
+  return`<div class="nft"><img loading="lazy" src="${esc(im)}" alt=""><div><b>${esc(n.dns||n.metadata?.name||short(n.address))}</b><br><span class="m">${esc(n.collection?.name||'')}</span></div></div>`}).join('')+`</div>`}
+$('#go').onclick=()=>load($('#addr').value);$('#addr').onkeydown=e=>e.key=='Enter'&&load($('#addr').value);
+if(location.hash.length>1)load(decodeURIComponent(location.hash.slice(1)));
+</script></body></html>
