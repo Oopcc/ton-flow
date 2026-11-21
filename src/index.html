@@ -1,0 +1,168 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>TON Flow</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#0f1318;--p:#1a2028;--p2:#222b35;--t:#e8edf2;--m:#8794a3;--in:#3b8ad9;--out:#d9832b;--ac:#3aa0ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--t);font:14px/1.4 system-ui,-apple-system,Segoe UI,sans-serif}
+header{display:flex;gap:8px;padding:12px 16px;background:var(--p);flex-wrap:wrap;align-items:center}
+header b{font-size:16px;margin-right:6px}
+input,select,button{background:var(--p2);color:var(--t);border:1px solid #2e3a47;border-radius:8px;padding:8px 10px;font:inherit}
+button{cursor:pointer}#addr{flex:1;min-width:260px}#go{background:var(--ac);border:0;color:#fff;font-weight:600}
+nav{display:flex;gap:4px;padding:8px 16px;overflow:auto;border-bottom:1px solid #222b35}
+nav a{padding:6px 12px;border-radius:16px;color:var(--m);cursor:pointer;white-space:nowrap}nav a.on{background:var(--p2);color:var(--t)}
+main{padding:16px}.cards{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.card{background:var(--p);border-radius:12px;padding:10px 14px;min-width:150px}.card small{display:block;color:var(--m)}.card b{font-size:18px}
+table{width:100%;border-collapse:collapse}td,th{padding:8px;text-align:left;border-bottom:1px solid #222b35}th{color:var(--m);font-weight:500}
+.in{color:var(--in)}.out{color:var(--out)}.m{color:var(--m)}a.l{color:var(--ac);cursor:pointer}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.nft{background:var(--p);border-radius:12px;overflow:hidden}.nft img{width:100%;aspect-ratio:1;object-fit:cover;display:block;background:var(--p2)}
+.nft div{padding:8px;font-size:12px;word-break:break-word}
+.seg{display:flex;gap:6px;margin-bottom:10px}.seg button{color:var(--m)}.seg button.on{background:var(--ac);border-color:var(--ac);color:#fff}
+#gsvg{width:100%;height:calc(100vh - 260px);min-height:420px;background:#0c1014;border-radius:12px;cursor:grab;touch-action:none;user-select:none;display:block}
+#gsvg text{fill:#e8edf2;font-size:12px}#gsvg .nn{font-size:13px;font-weight:600}#gsvg .ns{font-size:11px;fill:#8794a3}
+#gsvg .g{cursor:pointer}#gsvg .g:hover .nn{fill:#3aa0ff}
+#st{color:var(--m);padding:4px 16px;min-height:22px}
+</style></head><body>
+<header><b>◈ TON Flow</b>
+<input id="addr" placeholder="Адрес кошелька или name.ton" autofocus>
+<select id="depth"><option value="100">100 событий</option><option value="300" selected>300</option><option value="1000">1000</option><option value="3000">3000</option></select>
+<input id="key" placeholder="API key (необяз.)" style="width:150px" type="password">
+<button id="go">Показать</button></header>
+<div id="st"></div><nav id="tabs"></nav><main id="view"></main>
+<script>
+const $=s=>document.querySelector(s),API='https://tonapi.io/v2',sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const short=a=>a&&a.length>14?a.slice(0,5)+'…'+a.slice(-4):(a||''),nm=p=>p.name||short(p.address),cut=(s,n)=>s.length>n?s.slice(0,n-1)+'…':s;
+const fmt=(n,d=2)=>Number(n).toLocaleString('ru',{maximumFractionDigits:d});
+const col=s=>{let h=0;for(const c of s)h=(h*31+c.charCodeAt(0))%360;return`hsl(${h} 55% 45%)`};
+const SYM={USD:'$',RUB:'₽',EUR:'€'};
+const norm=p=>Object.fromEntries(Object.entries(p||{}).map(([k,v])=>[k.toUpperCase(),v]));
+const show=o=>Object.keys(SYM).filter(c=>o[c]!=null&&!isNaN(o[c])).map(c=>SYM[c]+fmt(o[c],c=='RUB'?0:2)).join(' · ')||'—';
+const mul=(v,p)=>Object.fromEntries(Object.keys(SYM).map(c=>[c,p[c]!=null?v*p[c]:null]));
+let S=null,TAB='people',MODE='all',R={},V=null,NODES=[],LT=0;
+const COL=340,RH=54;
+$('#key').value=localStorage.getItem('tfkey')||'';
+const multi=v=>show(mul(v,R)),st=t=>$('#st').textContent=t;
+async function api(p){const k=$('#key').value.trim();localStorage.setItem('tfkey',k);
+ for(let i=0;i<5;i++){const r=await fetch(API+p,{headers:k?{Authorization:'Bearer '+k}:{}});
+  if(r.status==429){await sleep(1300*(i+1));continue}
+  if(!r.ok)throw new Error(r.status+' '+(await r.text().catch(()=>'')).slice(0,120));return r.json()}
+ throw new Error('Лимит запросов — добавьте API key')}
+function cat(n){const c=(n.collection?.name||'').toLowerCase(),d=(n.collection?.description||'').toLowerCase(),
+ x=(n.metadata?.name||'').toLowerCase(),at=(n.metadata?.attributes||[]).map(a=>(a.trait_type||'').toLowerCase());
+ if(c.includes('username')||x.startsWith('@')||(n.dns||'').endsWith('.t.me'))return'users';
+ if(c.includes('number')||/^\+?888/.test(x.replace(/\s/g,'')))return'nums';
+ if((n.dns||'').endsWith('.ton'))return'dns';
+ if(at.includes('model')||at.includes('backdrop')||at.includes('symbol')||c.includes('gift')||d.includes('gift'))return'gifts';
+ return'other'}
+async function loadNft(){S.nftErr='';
+ try{S.nfts=(await api(`/accounts/${S.me}/nfts?limit=1000&indirect_ownership=true`)).nft_items||[]}catch(e){S.nftErr=e.message;S.nfts=[]}
+ S.cat={};for(const n of S.nfts)(S.cat[cat(n)]??=[]).push(n)}
+async function retryNft(){st('NFT…');await loadNft();st('');draw()}
+async function load(addr){
+ addr=addr.trim();if(!addr)return;$('#addr').value=addr;location.hash=addr;V=null;const T=++LT;
+ try{st('Загрузка аккаунта…');const acc=await api('/accounts/'+encodeURIComponent(addr));if(T!=LT)return;const me=acc.address;
+  S={me,acc,nfts:[],cat:{},jets:[],inn:{},out:{},tx:[],evN:0,root:null,nftErr:''};draw();
+  st('Курс…');R=norm(await api('/rates?tokens=ton&currencies=usd,rub,eur').then(r=>r.rates?.TON?.prices).catch(()=>({})));
+  st('NFT…');await loadNft();if(T!=LT)return;draw();
+  st('Токены…');S.jets=await api(`/accounts/${me}/jettons?currencies=usd,rub,eur`).then(r=>r.balances||[]).catch(()=>[]);if(T!=LT)return;draw();
+  const lim=+$('#depth').value;let evs=[],bl='';
+  while(evs.length<lim){st(`События: ${evs.length}…`);
+   const r=await api(`/accounts/${me}/events?limit=100&subject_only=true`+(bl?`&before_lt=${bl}`:''));if(T!=LT)return;
+   evs=evs.concat(r.events||[]);if(!r.next_from||!r.events?.length)break;bl=r.next_from}
+  Object.assign(S,agg(evs,me),{evN:evs.length});buildRoot();st('');draw()
+ }catch(e){st('Ошибка: '+e.message)}}
+function agg(evs,me){const inn={},out={},tx=[];
+ for(const e of evs)for(const a of e.actions||[]){
+  const j=a.JettonTransfer,t=a.TonTransfer,n=a.NftItemTransfer,x=t||j||n;if(!x||a.status!=='ok')continue;
+  const s=x.sender,r=x.recipient;if(!s||!r)continue;
+  const dir=s.address===me?'out':r.address===me?'in':null;if(!dir)continue;
+  const peer=dir==='out'?r:s,M=dir==='out'?out:inn,row=M[peer.address]??={a:peer,n:0,ton:0,c:0,nft:0,jet:0};
+  let amt='',kind='ton',v=0;row.n++;
+  if(t){v=t.amount/1e9;row.ton+=v;amt=fmt(v,4)+' TON'}
+  else if(j){kind='jetton';row.jet++;amt=fmt(j.amount/10**(j.jetton.decimals||9),4)+' '+(j.jetton.symbol||'')}
+  else{kind='nft';row.nft++;amt='NFT'}
+  if(x.comment)row.c++;
+  tx.push({ts:e.timestamp,dir,peer,kind,amt,v,cm:x.comment||''})}
+ return{inn,out,tx}}
+/* ---- граф ---- */
+const mkn=(r,sd,anc,d)=>({a:r.a,n:r.n,ton:r.ton,c:r.c,nft:r.nft,jet:r.jet,side:sd,depth:d,anc:new Set([...anc,r.a.address]),kids:null,open:false,loading:false,err:'',more:0,y:0,my:0});
+function topN(M,k,skip){const a=Object.values(M).filter(r=>!skip||!skip.has(r.a.address)).sort((x,y)=>y.n-x.n);return{rows:a.slice(0,k),more:Math.max(0,a.length-k)}}
+function buildRoot(){const l=topN(S.inn,12),r=topN(S.out,12),sk=new Set([S.me]);
+ S.root={L:l.rows.map(x=>mkn(x,-1,sk,1)),R:r.rows.map(x=>mkn(x,1,sk,1)),moreL:l.more,moreR:r.more}}
+async function expand(nd){nd.loading=true;nd.err='';renderGraph();
+ try{const r=await api(`/accounts/${nd.a.address}/events?limit=100&subject_only=true`),g=agg(r.events||[],nd.a.address),t=topN(nd.side<0?g.inn:g.out,8,nd.anc);
+  nd.kids=t.rows.map(x=>mkn(x,nd.side,nd.anc,nd.depth+1));nd.more=t.more;nd.open=true}
+ catch(e){nd.err=e.message}
+ nd.loading=false;renderGraph()}
+function toggle(nd){if(nd.loading)return;if(nd.kids){nd.open=!nd.open;renderGraph()}else expand(nd)}
+function lay(nd,y0){const k=nd.open&&nd.kids&&nd.kids.length?nd.kids:null;if(!k){nd.y=y0+RH/2;return RH}
+ let y=y0;for(const c of k)y+=lay(c,y);nd.my=y+10;if(nd.more>0)y+=22;nd.y=(k[0].y+k[k.length-1].y)/2;return Math.max(RH,y-y0)}
+function layList(list,y0,more){let y=y0;for(const c of list)y+=lay(c,y);const my=y+10;if(more>0)y+=22;return{h:y-y0,my}}
+function rend(nd,sd,pa,mx,o){
+ const x=sd*nd.depth*COL,y=nd.y,i=NODES.push(nd)-1,c=sd<0?'#3b8ad9':'#d9832b',w=(2+9*nd.n/mx).toFixed(1),x1=x-sd*16,mid=(x1+pa.x)/2;
+ o.p+=`<path d="M${x1} ${y}C${mid} ${y} ${mid} ${pa.y} ${pa.x} ${pa.y}" fill="none" stroke="${c}" stroke-width="${w}" opacity=".8"/>`;
+ const tx=x+sd*22,an=sd<0?'end':'start',bx=x+sd*232,nme=nm(nd.a);
+ const ex=[`⇄${nd.n}`,nd.ton?`💎${fmt(nd.ton,nd.ton<10?2:0)}`:'',nd.c?`💬${nd.c}`:'',nd.nft?`🎁${nd.nft}`:'',nd.jet?`🪙${nd.jet}`:''].filter(Boolean).join('  ');
+ o.n+=`<g class="g" data-act="go" data-i="${i}"><circle cx="${x}" cy="${y}" r="14" fill="${col(nd.a.address)}"/>
+ <text x="${x}" y="${y+4}" text-anchor="middle" style="fill:#fff;font-size:11px">${esc((nme[0]||'?').toUpperCase())}</text>
+ <text class="nn" x="${tx}" y="${y-3}" text-anchor="${an}">${esc(cut(nme,20))}</text>
+ <text class="ns" x="${tx}" y="${y+12}" text-anchor="${an}">${nd.err?'⚠ '+esc(nd.err.slice(0,28)):ex}</text></g>
+ <g class="g" data-act="exp" data-i="${i}"><circle cx="${bx}" cy="${y}" r="11" fill="#222b35" stroke="${c}"/>
+ <text x="${bx}" y="${y+4}" text-anchor="middle" style="font-size:14px">${nd.loading?'…':nd.open?'–':'+'}</text></g>`;
+ if(nd.open&&nd.kids&&nd.kids.length){const m2=Math.max(1,...nd.kids.map(k=>k.n));
+  for(const k of nd.kids)rend(k,sd,{x:bx+sd*11,y},m2,o);
+  if(nd.more>0)o.n+=`<text class="ns" x="${x+sd*(COL+22)}" y="${nd.my}" text-anchor="${an}">ещё ${nd.more}</text>`}}
+function graphSvg(){if(!S.root)return'<p class="m" style="padding:20px">Загружаю события…</p>';
+ NODES=[];const rt=S.root,o={p:'',n:''};
+ for(const sd of [-1,1]){if((sd<0&&MODE=='out')||(sd>0&&MODE=='in'))continue;
+  const list=sd<0?rt.L:rt.R,more=sd<0?rt.moreL:rt.moreR,a=layList(list,0,more),b=layList(list,-a.h/2,more),mx=Math.max(1,...list.map(k=>k.n));
+  for(const k of list)rend(k,sd,{x:sd*92,y:0},mx,o);
+  if(more>0)o.n+=`<text class="ns" x="${sd*(COL+22)}" y="${b.my}" text-anchor="${sd<0?'end':'start'}">ещё ${more}</text>`}
+ const nme=S.acc.name||short(S.me);
+ const root=`<rect x="-90" y="-34" width="180" height="68" rx="16" fill="#222b35"/><circle cx="-58" cy="0" r="16" fill="${col(S.me)}"/><text class="nn" x="-34" y="4">${esc(cut(nme,12))}</text>`;
+ return`<svg id="gsvg"><g id="vp">${o.p}${root}${o.n}</g></svg>`}
+function renderGraph(){const w=$('#gwrap');if(!w)return;w.innerHTML=graphSvg();bindGraph()}
+function bindGraph(){const sv=$('#gsvg');if(!sv)return;
+ if(!V)V={x:sv.clientWidth/2,y:sv.clientHeight/2,k:Math.min(1,(sv.clientWidth||1200)/1240)};
+ const ap=()=>$('#vp').setAttribute('transform',`translate(${V.x} ${V.y}) scale(${V.k})`);ap();
+ sv.onwheel=e=>{e.preventDefault();const r=sv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top,k=Math.min(2.5,Math.max(.25,V.k*(e.deltaY<0?1.12:.89)));
+  V.x=mx-(mx-V.x)*k/V.k;V.y=my-(my-V.y)*k/V.k;V.k=k;ap()};
+ let d=null;
+ sv.onpointerdown=e=>{d={x:e.clientX,y:e.clientY,vx:V.x,vy:V.y,m:0}};
+ sv.onpointermove=e=>{if(!d)return;const dx=e.clientX-d.x,dy=e.clientY-d.y;d.m=Math.max(d.m,Math.abs(dx)+Math.abs(dy));V.x=d.vx+dx;V.y=d.vy+dy;ap()};
+ sv.onpointerleave=()=>{d=null};
+ sv.onpointerup=e=>{const mv=d&&d.m>5;d=null;if(mv)return;const t=e.target.closest('[data-act]');if(!t)return;
+  const nd=NODES[+t.dataset.i];if(t.dataset.act=='go')load(nd.a.address);else toggle(nd)}}
+/* ---- вкладки ---- */
+const TABS=[['sum','Сводка'],['people','Люди'],['tx','Транзакции'],['gifts','Подарки'],['users','Юзернеймы'],['nums','Номера'],['dns','Домены .ton'],['all','Все NFT'],['jet','Токены']];
+const card=(t,b,s='',cl='')=>`<div class="card ${cl}"><small>${t}</small><b>${b}</b><small>${s}</small></div>`;
+const jv=b=>mul(b.balance/10**(b.jetton.decimals??9),norm(b.price?.prices));
+function jetTot(){const t={USD:0,RUB:0,EUR:0};for(const b of S.jets){const v=jv(b);for(const c in t)if(v[c]!=null)t[c]+=v[c]}return t}
+function tot(){const t=mul(S.acc.balance/1e9,R),j=jetTot();for(const c in t)if(t[c]!=null)t[c]+=j[c];return t}
+function head(){const b=S.acc.balance/1e9;
+ return`<div class="cards">${card('Баланс',fmt(b,3)+' TON',multi(b))}${card('Портфель (TON + токены)',show(tot()))}${card('NFT / токены',S.nfts.length+' / '+S.jets.length)}${card('События',S.evN)}</div>`}
+const sumT=(M,k)=>Object.values(M).reduce((s,r)=>s+r[k],0);
+function peerTbl(M,cl){return`<table>`+Object.values(M).sort((a,b)=>b.n-a.n).slice(0,8).map(r=>`<tr><td><a class="l" onclick="load('${r.a.address}')">${esc(nm(r.a))}</a></td><td class="${cl}">${r.n}</td><td>${r.ton?fmt(r.ton,2)+' TON':''}</td><td class="m">${r.ton?multi(r.ton):''}</td></tr>`).join('')+`</table>`}
+function sumView(){const i=sumT(S.inn,'ton'),o=sumT(S.out,'ton'),a=S.tx.length?new Date(S.tx[S.tx.length-1].ts*1000).toLocaleDateString('ru'):'—',z=S.tx.length?new Date(S.tx[0].ts*1000).toLocaleDateString('ru'):'—';
+ const cn=['gifts','users','nums','dns','other'].map(k=>[{gifts:'подарков',users:'юзернеймов',nums:'номеров',dns:'доменов',other:'прочих'}[k],S.cat[k]?.length||0]).map(([l,n])=>`${n} ${l}`).join(' · ');
+ return`<div class="cards">${card('Токены (стоимость)',show(jetTot()),S.jets.length+' шт.')}${card('Получено TON',fmt(i),multi(i),'in')}${card('Отправлено TON',fmt(o),multi(o),'out')}${card('Курс 1 TON',show(R))}${card('Период событий',a+' – '+z)}</div>
+ <p class="m">NFT: ${cn}</p><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:20px"><div><h4 class="in">Топ отправителей</h4>${peerTbl(S.inn,'in')}</div><div><h4 class="out">Топ получателей</h4>${peerTbl(S.out,'out')}</div></div>`}
+function setMode(m){MODE=m;draw()}
+function peopleView(){const b=(m,l)=>`<button class="${MODE==m?'on':''}" onclick="setMode('${m}')">${l}</button>`;
+ return`<div class="seg">${b('in','Входящие')}${b('all','Все')}${b('out','Исходящие')}</div><div id="gwrap"></div><p class="m">Колесо — масштаб, перетаскивание — сдвиг. «+» раскрывает, с кем общался этот кошелёк, клик по имени открывает его кошелёк.</p>`}
+function txs(){return`<table><tr><th>Время</th><th></th><th>Адрес</th><th>Сумма</th><th>≈</th><th>Комментарий</th></tr>`+S.tx.slice(0,500).map(t=>
+ `<tr><td class="m">${new Date(t.ts*1000).toLocaleString('ru')}</td><td class="${t.dir}">${t.dir=='in'?'↓ получено':'↑ отправлено'}</td>
+ <td><a class="l" onclick="load('${t.peer.address}')">${esc(nm(t.peer))}</a></td><td>${esc(t.amt)}</td><td class="m">${t.kind=='ton'?multi(t.v):''}</td><td class="m">${esc(t.cm)}</td></tr>`).join('')+`</table>`}
+function jet(){return S.jets.length?`<table><tr><th>Токен</th><th>Баланс</th><th>Стоимость</th></tr>`+S.jets.map(b=>`<tr><td>${esc(b.jetton.name||b.jetton.symbol)}</td><td>${fmt(b.balance/10**(b.jetton.decimals??9),4)} ${esc(b.jetton.symbol)}</td><td class="m">${show(jv(b))}</td></tr>`).join('')+`</table>`:'<p class="m">Пусто</p>'}
+function nftGrid(k){const e=S.nftErr?`<p class="out">NFT не загрузились: ${esc(S.nftErr)} <button onclick="retryNft()">Повторить</button></p>`:'';
+ const l=k=='all'?S.nfts:S.cat[k]||[];
+ if(!l.length)return e+`<p class="m">Пусто${!S.nftErr&&S.nfts.length?` — всего NFT: ${S.nfts.length}, смотри вкладку «Все NFT»`:''}</p>`;
+ return e+`<div class="grid">`+l.map(n=>{const im=(n.previews||[]).find(p=>p.resolution=='500x500')?.url||n.previews?.[0]?.url||n.metadata?.image||'';
+  return`<div class="nft"><img loading="lazy" src="${esc(im)}" alt=""><div><b>${esc(n.dns||n.metadata?.name||short(n.address))}</b><br><span class="m">${esc(n.collection?.name||'')}</span></div></div>`}).join('')+`</div>`}
+function draw(){if(!S)return;
+ $('#tabs').innerHTML=TABS.map(([k,l])=>{const n=k=='all'?S.nfts.length:k=='jet'?S.jets.length:S.cat[k]?.length;return`<a class="${k==TAB?'on':''}" onclick="TAB='${k}';draw()">${l}${n?` · ${n}`:''}</a>`}).join('');
+ const f=({sum:sumView,people:peopleView,tx:txs,jet:jet}[TAB])||(()=>nftGrid(TAB));
+ $('#view').innerHTML=head()+f();if(TAB=='people')renderGraph()}
+$('#go').onclick=()=>load($('#addr').value);$('#addr').onkeydown=e=>e.key=='Enter'&&load($('#addr').value);
+if(location.hash.length>1)load(decodeURIComponent(location.hash.slice(1)));
+</script></body></html>
